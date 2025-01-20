@@ -85,17 +85,6 @@ resource "openstack_networking_secgroup_rule_v2" "udp_out" {
   security_group_id = openstack_networking_secgroup_v2.allow_icmp_tcp_udp_sg.id
 }
 
-# 7) allow_metadata
-resource "openstack_networking_secgroup_rule_v2" "allow_metadata" {
-  direction         = "ingress"
-  ethertype         = "IPv4"
-  protocol          = "tcp"
-  port_range_min    = 80
-  port_range_max    = 80
-  remote_ip_prefix  = "169.254.169.254/32"
-  security_group_id = openstack_networking_secgroup_v2.allow_icmp_tcp_udp_sg.id
-}
-
 # 3. k8s-external 네트워크/서브넷
 resource "openstack_networking_network_v2" "k8s_external_net" {
   name           = "k8s-external"
@@ -131,22 +120,27 @@ resource "openstack_networking_subnet_v2" "k8s_internal_subnet" {
 
 resource "openstack_compute_keypair_v2" "auto_gen_key" {
   name = "tofu-key"
-  // public_key = ...  <-- 생략하면 자동 생성됨
+  // 공개키를 입력하지 않으면 Terraform이 자동으로 키 페어를 생성합니다.
 }
 
-# 생성된 private_key를 Terraform Output으로 보여주기 (기본적으로 "민감" 처리하는 것을 권장)
+# Private Key를 출력 (민감 데이터 처리)
 output "generated_private_key" {
   description = "This is the newly generated private key from OpenStack"
   value       = openstack_compute_keypair_v2.auto_gen_key.private_key
   sensitive   = true
 }
 
+# Public Key를 출력
+output "generated_public_key" {
+  description = "This is the newly generated public key from OpenStack"
+  value       = openstack_compute_keypair_v2.auto_gen_key.public_key
+}
 
-#생성된 private key를 로컬에 파일로 저장
+# Private Key를 로컬 파일로 저장
 resource "local_file" "my_private_key_file" {
-  content  = openstack_compute_keypair_v2.auto_gen_key.private_key
-  filename = "./tofu-key.pem"
-  file_permission = "400"
+  content          = openstack_compute_keypair_v2.auto_gen_key.private_key
+  filename         = "./tofu-key.pem"
+  file_permission  = "400"
 }
 
 
@@ -287,12 +281,12 @@ resource "openstack_networking_port_v2" "k8s_internal_port_5" {
 }
 
 ########################
-# 1) Win VM
+# 1) ansible
 ########################
 resource "openstack_compute_instance_v2" "win_vm" {
-  name           = "win-vm"
-  flavor_name    = "m1.window"  # 실제 존재하는 Flavor
-  image_id       = "b0213f0c-1b56-45bc-811d-8158fb3a8069"  # Windows10 이미지 ID
+  name           = "ansible-server"
+  flavor_name    = "t1.k8s"  # 실제 존재하는 Flavor
+  image_id       = "7666e39a-b7c4-4cd1-b10b-2e3cb28fc221"  # Windows10 이미지 ID
   key_pair       = openstack_compute_keypair_v2.auto_gen_key.name
 
   network {
@@ -306,7 +300,10 @@ resource "openstack_compute_instance_v2" "win_vm" {
   network {
     port = openstack_networking_port_v2.k8s_external_port_1.id
   }
-  user_data = templatefile("./cloud_init.tpl", {})
+
+  user_data = templatefile("${path.module}/cloud_init.tpl", {
+    public_key = openstack_compute_keypair_v2.auto_gen_key.public_key
+  })
 
   config_drive = true  # Config Drive 활성화
 }
@@ -328,9 +325,13 @@ resource "openstack_compute_instance_v2" "controller_node" {
   network {
     port = openstack_networking_port_v2.k8s_internal_port_2.id
   }
-  user_data = templatefile("./cloud_init.tpl", {})
+
+  user_data = templatefile("${path.module}/cloud_init.tpl", {
+    public_key = openstack_compute_keypair_v2.auto_gen_key.public_key
+  })
 
   config_drive = true  # Config Drive 활성화
+
 }
 
 ########################
@@ -355,7 +356,10 @@ resource "openstack_compute_instance_v2" "compute_node1" {
   network {
     port = openstack_networking_port_v2.k8s_external_port_2.id
   }
-  user_data = templatefile("./cloud_init.tpl", {})
+
+  user_data = templatefile("${path.module}/cloud_init.tpl", {
+    public_key = openstack_compute_keypair_v2.auto_gen_key.public_key
+  })
 
   config_drive = true  # Config Drive 활성화
 }
@@ -383,7 +387,10 @@ resource "openstack_compute_instance_v2" "compute_node2" {
   network {
     port = openstack_networking_port_v2.k8s_external_port_3.id
   }
-  user_data = templatefile("./cloud_init.tpl", {})
+
+  user_data = templatefile("${path.module}/cloud_init.tpl", {
+    public_key = openstack_compute_keypair_v2.auto_gen_key.public_key
+  })
 
   config_drive = true  # Config Drive 활성화
 }
@@ -406,7 +413,10 @@ resource "openstack_compute_instance_v2" "storage_node" {
     port = openstack_networking_port_v2.k8s_internal_port_5.id
   }
 
-  user_data = templatefile("./cloud_init.tpl", {})
+  user_data = templatefile("${path.module}/cloud_init.tpl", {
+    public_key = openstack_compute_keypair_v2.auto_gen_key.public_key
+  })
 
   config_drive = true  # Config Drive 활성화
 }
+

@@ -1,0 +1,209 @@
+---
+- name: 초기 설정 작업
+  hosts: all
+  become: true
+  tasks:
+    - name: 호스트 이름 설정
+      shell: |
+        hostnamectl set-hostname {{ new_hostname }}
+      args:
+        executable: /bin/bash
+      vars:
+        new_hostname: >
+          {% if inventory_hostname == 'controller-node' %}
+            node1.example.com
+          {% elif inventory_hostname == 'compute-node1' %}
+            node2.example.com
+          {% elif inventory_hostname == 'compute-node2' %}
+            node3.example.com
+          {% elif inventory_hostname == 'infra-node' %}
+            storage.example.com
+          {% endif %}
+
+    - name: Kubernetes 및 CRI-O 리포지토리 추가
+      block:
+        - name: Kubernetes 리포지토리 추가
+          copy:
+            dest: /etc/yum.repos.d/kubernetes.repo
+            content: |
+              [kubernetes]
+              name=Kubernetes
+              baseurl=https://pkgs.k8s.io/core:/stable:/v1.27/rpm/
+              enabled=1
+              gpgcheck=1
+              gpgkey=https://pkgs.k8s.io/core:/stable:/v1.27/rpm/repodata/repomd.xml.key
+
+        - name: CRI-O 리포지토리 추가
+          copy:
+            dest: /etc/yum.repos.d/cri-o.repo
+            content: |
+              [cri-o]
+              name=CRI-O
+              baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.28/rpm/
+              enabled=1
+              gpgcheck=1
+              gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/v1.28/rpm/repodata/repomd.xml.key
+
+    - name: Kubernetes 및 CRI-O 설치
+      shell: |
+        dnf search kubectl kubeadm kubelet cri-o
+        dnf install -y cri-o kubelet kubeadm kubectl
+        systemctl enable --now crio.service kubelet
+      args:
+        executable: /bin/bash
+
+    - name: 방화벽 비활성화
+      systemd:
+        name: firewalld
+        state: stopped
+        enabled: no
+
+    - name: SELinux 설정 변경
+      lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=permissive'
+
+    - name: SELinux 비활성화
+      shell: |
+        setenforce 0
+        getenforce
+      args:
+        executable: /bin/bash
+
+    - name: Swap 비활성화
+      shell: |
+        swapon -s
+        swapoff -a
+        sed -i 's/\/dev\/mapper\/rl-swap/\#\/dev\/mapper\/rl-swap/g' /etc/fstab
+        systemctl daemon-reload
+      args:
+        executable: /bin/bash
+
+    - name: Kubernetes 네트워크 설정
+      block:
+        - name: sysctl 설정 추가
+          copy:
+            dest: /etc/sysctl.d/k8s-mod.conf
+            content: |
+              net.bridge.bridge-nf-call-iptables=1
+              net.ipv4.ip_forward=1
+              net.bridge.bridge-nf-call-ip6tables=1
+
+        - name: sysctl 설정 적용
+          shell: sysctl --system -q
+          args:
+            executable: /bin/bash
+
+        - name: 모듈 로드 설정 추가
+          copy:
+            dest: /etc/modules-load.d/k8s-modules.conf
+            content: |
+              br_netfilter
+              overlay
+
+        - name: 필요한 커널 모듈 로드
+          shell: |
+            modprobe br_netfilter
+            modprobe overlay
+          args:
+            executable: /bin/bash
+
+    - name: /etc/hosts 파일 업데이트
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ item }}"
+        state: present
+      with_items:
+        - "192.168.10.10 node1.example.com node1"
+        - "192.168.10.20 node2.example.com node2"
+        - "192.168.10.30 node3.example.com node3"
+        - "192.168.10.40 storage.example.com storage"
+
+- name: 컨트롤러 노드에서 Kubernetes 초기화
+  hosts: controller
+  become: true
+  tasks:
+    - name: kubeadm init 실행
+      shell: |
+        kubeadm init --pod-network-cidr=192.168.0.0/16 \
+        --apiserver-advertise-address={{ ansible_host }}
+      args:
+        executable: /bin/bash
+      register: kubeadm_output
+
+    - name: kubeconfig 설정
+      shell: |
+        mkdir -p $HOME/.kube
+        cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        chown $(id -u):$(id -g) $HOME/.kube/config
+
+    - name: Helm 설치
+      shell: |
+        dnf install git tar -y
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        mkdir ~/bin
+        sh get_helm.sh
+        mv /usr/local/bin/helm ~/bin
+      args:
+        executable: /bin/bash
+
+    - name: Flannel 네트워크 설치 (Helm 사용)
+      shell: |
+        kubectl create ns kube-flannel
+        kubectl label --overwrite ns kube-flannel pod-security.kubernetes.io/enforce=privileged
+        helm repo add flannel https://flannel-io.github.io/flannel/
+        helm install flannel --set podCidr="192.168.0.0/16" --namespace kube-flannel flannel/flannel
+      args:
+        executable: /bin/bash
+
+    - name: Kubernetes API 서버가 준비될 때까지 대기
+      shell: |
+        until kubectl --kubeconfig=/root/.kube/config get nodes; do
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+
+    - name: 유효한 kubeadm 토큰 조회
+      shell: kubeadm token list | tail -n 1 | awk '{print $1}'
+      register: kubeadm_token
+
+    - name: CA 인증서 해시 값 추출
+      shell: |
+        openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt \
+        | openssl rsa -pubin -outform der 2>/dev/null \
+        | openssl dgst -sha256 -hex \
+        | sed 's/^.* //'
+      register: discovery_token_ca_cert_hash
+
+    - name: 유효한 kubeadm 토큰과 CA 해시를 전역 변수로 설정
+      set_fact:
+        global_kubeadm_token: "{{ kubeadm_token.stdout }}"
+        global_ca_cert_hash: "{{ discovery_token_ca_cert_hash.stdout }}"
+      run_once: true
+
+- name: master-node.conf 파일 생성
+  copy:
+    dest: /root/master-node-conf.j2
+    content: |
+      kubeadm join {{ controller_ip }}:6443 --token {{ global_kubeadm_token }} \
+      --discovery-token-ca-cert-hash sha256:{{ global_ca_cert_hash }}
+  vars:
+    controller_ip: "192.168.10.10"
+
+- name: 컴퓨트 노드 클러스터 조인
+  hosts: compute
+  become: true
+  tasks:
+    - name: 마스터 노드에서 Join 명령어 파일 가져오기
+      delegate_to: controller-node
+      fetch:
+        src: /root/master-node-conf.j2
+        dest: /tmp/master-node-conf.j2
+        flat: yes
+
+    - name: Join 명령어 실행
+      shell: "{{ lookup('file', '/tmp/master-node-conf.j2') }}"
+      args:
+        executable: /bin/bash

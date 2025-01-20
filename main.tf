@@ -85,6 +85,17 @@ resource "openstack_networking_secgroup_rule_v2" "udp_out" {
   security_group_id = openstack_networking_secgroup_v2.allow_icmp_tcp_udp_sg.id
 }
 
+# 7) allow_metadata
+resource "openstack_networking_secgroup_rule_v2" "allow_metadata" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  protocol          = "tcp"
+  port_range_min    = 80
+  port_range_max    = 80
+  remote_ip_prefix  = "169.254.169.254/32"
+  security_group_id = openstack_networking_secgroup_v2.allow_icmp_tcp_udp_sg.id
+}
+
 # 3. k8s-external 네트워크/서브넷
 resource "openstack_networking_network_v2" "k8s_external_net" {
   name           = "k8s-external"
@@ -295,6 +306,9 @@ resource "openstack_compute_instance_v2" "win_vm" {
   network {
     port = openstack_networking_port_v2.k8s_external_port_1.id
   }
+  user_data = templatefile("./cloud_init.tpl", {})
+
+  config_drive = true  # Config Drive 활성화
 }
 
 ########################
@@ -314,6 +328,9 @@ resource "openstack_compute_instance_v2" "controller_node" {
   network {
     port = openstack_networking_port_v2.k8s_internal_port_2.id
   }
+  user_data = templatefile("./cloud_init.tpl", {})
+
+  config_drive = true  # Config Drive 활성화
 }
 
 ########################
@@ -338,6 +355,9 @@ resource "openstack_compute_instance_v2" "compute_node1" {
   network {
     port = openstack_networking_port_v2.k8s_external_port_2.id
   }
+  user_data = templatefile("./cloud_init.tpl", {})
+
+  config_drive = true  # Config Drive 활성화
 }
 
 ########################
@@ -363,6 +383,9 @@ resource "openstack_compute_instance_v2" "compute_node2" {
   network {
     port = openstack_networking_port_v2.k8s_external_port_3.id
   }
+  user_data = templatefile("./cloud_init.tpl", {})
+
+  config_drive = true  # Config Drive 활성화
 }
 
 ########################
@@ -382,5 +405,8 @@ resource "openstack_compute_instance_v2" "storage_node" {
   network {
     port = openstack_networking_port_v2.k8s_internal_port_5.id
   }
-}
 
+  user_data = templatefile("./cloud_init.tpl", {})
+
+  config_drive = true  # Config Drive 활성화
+}

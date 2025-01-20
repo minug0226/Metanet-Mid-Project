@@ -85,21 +85,6 @@ resource "openstack_networking_secgroup_rule_v2" "udp_out" {
   security_group_id = openstack_networking_secgroup_v2.allow_icmp_tcp_udp_sg.id
 }
 
-# 2. k8s-internal 네트워크/서브넷
-resource "openstack_networking_network_v2" "k8s_internal_net" {
-  name           = "k8s-internal"
-  admin_state_up = true
-}
-
-resource "openstack_networking_subnet_v2" "k8s_internal_subnet" {
-  name            = "k8s-internal-subnet"
-  network_id      = openstack_networking_network_v2.k8s_internal_net.id
-  cidr            = "192.168.0.0/16"
-  ip_version      = 4
-  gateway_ip      = null           # 게이트웨이 비활성 (null)
-  enable_dhcp     = false           # 원하는 경우 DHCP 활성/비활성 선택
-}
-
 # 3. k8s-external 네트워크/서브넷
 resource "openstack_networking_network_v2" "k8s_external_net" {
   name           = "k8s-external"
@@ -115,6 +100,23 @@ resource "openstack_networking_subnet_v2" "k8s_external_subnet" {
   enable_dhcp     = false
   dns_nameservers = ["8.8.8.8"]
 }
+
+
+# 2. k8s-internal 네트워크/서브넷
+resource "openstack_networking_network_v2" "k8s_internal_net" {
+  name           = "k8s-internal"
+  admin_state_up = true
+}
+
+resource "openstack_networking_subnet_v2" "k8s_internal_subnet" {
+  name            = "k8s-internal-subnet"
+  network_id      = openstack_networking_network_v2.k8s_internal_net.id
+  cidr            = "192.168.0.0/16"
+  ip_version      = 4
+  gateway_ip      = null           # 게이트웨이 비활성 (null)
+  enable_dhcp     = false           # 원하는 경우 DHCP 활성/비활성 선택
+}
+
 
 resource "openstack_compute_keypair_v2" "auto_gen_key" {
   name = "tofu-key"

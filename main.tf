@@ -97,7 +97,7 @@ resource "openstack_networking_subnet_v2" "k8s_external_subnet" {
   cidr            = "10.10.10.0/24"
   ip_version      = 4
   gateway_ip      = "10.10.10.254"  # 외부 통신 게이트웨이
-  enable_dhcp     = false
+  enable_dhcp     = true
   dns_nameservers = ["8.8.8.8"]
 }
 
@@ -114,7 +114,7 @@ resource "openstack_networking_subnet_v2" "k8s_internal_subnet" {
   cidr            = "192.168.0.0/16"
   ip_version      = 4
   gateway_ip      = null           # 게이트웨이 비활성 (null)
-  enable_dhcp     = false           # 원하는 경우 DHCP 활성/비활성 선택
+  enable_dhcp     = true           # 원하는 경우 DHCP 활성/비활성 선택
 }
 
 

@@ -129,6 +129,14 @@ output "generated_private_key" {
 }
 
 
+#생성된 private key를 로컬에 파일로 저장
+resource "local_file" "my_private_key_file" {
+  content  = openstack_compute_keypair_v2.auto_gen_key.private_key
+  filename = "./tofu-key.pem"
+  file_permission = "400"
+}
+
+
 resource "openstack_networking_port_v2" "infra_port_controller" {
   name       = "infra-port-controller"
   network_id = "6c07f67e-1ea4-4726-bf6b-3a83bebb49ff"
@@ -173,7 +181,6 @@ resource "openstack_networking_port_v2" "infra_port_win_vm" {
     openstack_networking_secgroup_v2.allow_icmp_tcp_udp_sg.id
   ]
 }
-
 
 
 

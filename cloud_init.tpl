@@ -11,4 +11,3 @@ runcmd:
   - rm -f /etc/ssh/sshd_config.d/50-cloud-init.conf
   # SSH 데몬 재시작
   - systemctl restart sshd
-

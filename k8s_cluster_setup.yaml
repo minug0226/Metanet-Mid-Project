@@ -365,3 +365,44 @@
       shell: kubectl create -f /root/blog-pod-pvc.yaml
       args:
         executable: /bin/bash
+
+- name: Configure container registries
+  hosts: all
+  become: true
+  tasks:
+
+    # 인프라 노드에서만 podman 설치
+    - name: Install podman on infrastructure node
+      yum:
+        name: podman
+        state: present
+      when: inventory_hostname in groups['infra']
+
+    # /etc/containers/registries.conf.d/01-registries.conf 파일 생성
+    - name: Create /etc/containers/registries.conf.d/01-registries.conf
+      copy:
+        dest: /etc/containers/registries.conf.d/01-registries.conf
+        content: |
+          unqualified-search-registries = ["docker.io", "storage.example.com:5000"]
+          [[registry]]
+          insecure= true
+          location = "registry.demo.io:5000"
+      when: inventory_hostname in groups['compute'] or inventory_hostname in groups['infra']
+
+    # /etc/crio/crio.conf.d/20-internal.conf 파일 생성
+    - name: Create /etc/crio/crio.conf.d/20-internal.conf
+      copy:
+        dest: /etc/crio/crio.conf.d/20-internal.conf
+        content: |
+          [crio.image]
+          signature_policy = "/etc/crio/policy.json"
+          insecure_registries = [ "storage.example.com:5000" ]
+          registries = [ "storage.example.com:5000","quay.io" ]
+      when: inventory_hostname in groups['compute'] or inventory_hostname in groups['infra']
+
+    # crio 서비스 재시작
+    - name: Restart crio service
+      systemd:
+        name: crio
+        state: restarted
+      when: inventory_hostname in groups['compute'] or inventory_hostname in groups['infra']

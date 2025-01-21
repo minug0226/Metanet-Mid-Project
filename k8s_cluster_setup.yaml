@@ -207,3 +207,161 @@
       shell: "{{ lookup('file', '/tmp/master-node-conf.j2') }}"
       args:
         executable: /bin/bash
+
+- name: 인프라 노드 설정 및 NFS 서버 구성
+  hosts: infra-node
+  become: true
+  tasks:
+    # 컨트롤러에서 kubeconfig 가져오기 위한 디렉터리 생성
+    - name: /root/.kube 디렉터리 생성
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    # 컨트롤러 노드에서 kubeconfig 파일을 로컬 제어 서버로 가져오기
+    - name: 컨트롤러에서 kubeconfig 가져오기
+      delegate_to: controller-node
+      fetch:
+        src: /root/.kube/config
+        dest: /tmp/config-from-controller
+        flat: yes
+
+    # 가져온 kubeconfig 파일을 인프라 노드로 복사
+    - name: kubeconfig 파일을 인프라 노드로 복사
+      copy:
+        src: /tmp/config-from-controller
+        dest: /root/.kube/config
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Helm 설치 스크립트 및 바이너리 설치 준비
+      shell: |
+        dnf install git tar -y
+        curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        mkdir -p ~/bin
+        sh get_helm.sh
+        mv /usr/local/bin/helm ~/bin
+      args:
+        executable: /bin/bash
+
+    - name: nfs-utils 설치
+      dnf:
+        name: nfs-utils
+        state: present
+
+    - name: nfs-server 활성화 및 시작
+      systemd:
+        name: nfs-server
+        enabled: true
+        state: started
+
+    - name: NFS 공유 디렉터리 생성
+      file:
+        path: /nfs
+        state: directory
+        mode: '0755'
+
+    - name: Kubernetes용 NFS exports 파일 생성
+      copy:
+        dest: /etc/exports.d/kubernetes.exports
+        content: |
+          /nfs *(rw,sync,no_root_squash,insecure,no_subtree_check,nohide)
+
+    - name: nfs-server 재시작 및 exports 적용
+      shell: |
+        systemctl restart nfs-server
+        exportfs -avrs
+      args:
+        executable: /bin/bash
+
+    - name: NFS 공유 상태 확인
+      shell: showmount -e storage.example.com
+      args:
+        executable: /bin/bash
+      register: showmount_output
+    - debug:
+        msg: "{{ showmount_output.stdout }}"
+
+    - name: 방화벽 비활성화
+      systemd:
+        name: firewalld
+        state: stopped
+        enabled: false
+
+    - name: CSI Driver NFS Helm 저장소 추가
+      shell: helm repo add csi-driver-nfs https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+      environment:
+        PATH: "{{ ansible_env.HOME }}/bin:{{ ansible_env.PATH }}"
+      args:
+        executable: /bin/bash
+
+    - name: CSI Driver NFS 설치
+      shell: helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs --namespace kube-system --version v4.9.0
+      environment:
+        PATH: "{{ ansible_env.HOME }}/bin:{{ ansible_env.PATH }}"
+      args:
+        executable: /bin/bash
+
+    - name: Helm 설치된 차트 목록 확인
+      shell: helm list --namespace kube-system
+      environment:
+        PATH: "{{ ansible_env.HOME }}/bin:{{ ansible_env.PATH }}"
+      args:
+        executable: /bin/bash
+      register: helm_list
+    - debug:
+        msg: "{{ helm_list.stdout }}"
+
+    - name: storageclass-configure.yaml 파일 생성
+      copy:
+        dest: /root/storageclass-configure.yaml
+        content: |
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: default
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
+          provisioner: nfs.csi.k8s.io
+          parameters:
+            server: storage.example.com
+            share: /nfs
+          reclaimPolicy: Delete
+          volumeBindingMode: Immediate
+          mountOptions:
+            - hard
+            - nfsvers=4.1
+
+    - name: StorageClass 적용
+      shell: kubectl apply -f /root/storageclass-configure.yaml
+      args:
+        executable: /bin/bash
+
+    - name: SELinux 비활성화
+      shell: setenforce 0
+      args:
+        executable: /bin/bash
+
+    - name: blog-pod-pvc.yaml 파일 생성
+      copy:
+        dest: /root/blog-pod-pvc.yaml
+        content: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: pgdata
+            labels:
+              app: pgdata
+          spec:
+            accessModes:
+              - ReadWriteMany
+            resources:
+              requests:
+                storage: 2Gi
+
+    - name: PersistentVolumeClaim 생성
+      shell: kubectl create -f /root/blog-pod-pvc.yaml
+      args:
+        executable: /bin/bash

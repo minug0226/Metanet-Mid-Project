@@ -2,6 +2,7 @@
 - name: 초기 설정 작업
   hosts: all
   become: true
+  gather_facts: no
   tasks:
     - name: 호스트 이름 설정
       shell: |

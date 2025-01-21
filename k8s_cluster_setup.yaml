@@ -183,14 +183,14 @@
         global_ca_cert_hash: "{{ discovery_token_ca_cert_hash.stdout }}"
       run_once: true
 
-- name: master-node.conf 파일 생성
-  copy:
-    dest: /root/master-node-conf.j2
-    content: |
-      kubeadm join {{ controller_ip }}:6443 --token {{ global_kubeadm_token }} \
-      --discovery-token-ca-cert-hash sha256:{{ global_ca_cert_hash }}
-  vars:
-    controller_ip: "192.168.10.10"
+    - name: master-node.conf 파일 생성
+      copy:
+        dest: /root/master-node-conf.j2
+        content: |
+          kubeadm join {{ controller_ip }}:6443 --token {{ global_kubeadm_token }} \
+          --discovery-token-ca-cert-hash sha256:{{ global_ca_cert_hash }}
+      vars:
+        controller_ip: "192.168.10.10"
 
 - name: 컴퓨트 노드 클러스터 조인
   hosts: compute
